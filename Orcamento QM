@@ -1,0 +1,1054 @@
+import { useState, useCallback } from "react";
+
+// ============================================================
+// BASE DE DADOS — extraída diretamente da planilha
+// ============================================================
+const DB = {
+  caixasAluminio: [
+    { medidores: 2,  preco: 1017.09  },
+    { medidores: 3,  preco: 184.82   },
+    { medidores: 4,  preco: 1352.57  },
+    { medidores: 6,  preco: 1688.07  },
+    { medidores: 9,  preco: 2621.05  },
+    { medidores: 12, preco: 3208.11  },
+    { medidores: 15, preco: 3705.68  },
+    { medidores: 18, preco: 4204.51  },
+    { medidores: 21, preco: 4924.70  },
+    { medidores: 24, preco: 5350.00  },
+    { medidores: 27, preco: 5918.11  },
+    { medidores: 30, preco: 6414.81  },
+    { medidores: 33, preco: 6870.00  },
+    { medidores: 36, preco: 8834.00  },
+  ],
+  caixasPolicarb: {
+    bep:          { nome: "Cx BEP",                preco: 183.785  },
+    bepDps:       { nome: "Cx BEP + DPS",          preco: 183.785  },
+    cb100:        { nome: "Cx Barramento CB 100",  preco: 262.255  },
+    cb200:        { nome: "Cx Barramento CB 200",  preco: 277.7425 },
+    medidor:      { nome: "Cx Medidor",            preco: 70.00    },
+    disjGeral:    { nome: "Cx Disjuntor Geral",    preco: 143.5175 },
+    especial:     { nome: "Cx Especial",           preco: 900.00   },
+  },
+  disjuntores: {
+    mono: { "40A": 6.13,      "50A": 6.75,      "63A": 7.423  },
+    bi:   { "40A": 21.6301,   "50A": 21.6301,   "63A": 21.6301 },
+    tri:  { "50A": 43.36,     "63A": 43.36,     "70A": 91.22  },
+    cm:   { "80A": 150.8147,  "90A": 150.8147,  "100A": 198.09,
+            "125A": 160.31,   "150A": 250.45,   "175A": 250.45,
+            "200A": 250.45,   "225A": 250.45,   "250A": 250.45 },
+    din:  { "50A": 0,         "63A": 0,         "70A": 0 }, // disjuntor geral (Din)
+  },
+  // preço por metro de cabo (seção -> preco)
+  cabos: {
+    "10mm²": 9.3759,
+    "16mm²": 14.4131,
+    "25mm²": 20.6902,
+    "35mm²": 26.4878,
+    "50mm²": 36.4634,
+    "70mm²": 51.9591,
+    "95mm²": 73.271,
+  },
+  // termocontrátil: fator 0.1 sobre a quantidade de cabo
+  termo: {
+    "10mm²": 2.0414,
+    "16mm²": 2.7694,
+    "25mm²": 6.2588,
+    "35mm²": 10.2692,
+    "50mm²": 19.40,
+    "70mm²": 29.15,
+    "95mm²": 30.40,
+  },
+  // olhais por seção
+  olhais: {
+    "10mm²": 0.9670,
+    "16mm²": 1.7624,
+    "25mm²": 1.8546,
+    "35mm²": 1.8546,
+    "50mm²": 3.1086,
+    "70mm²": 4.4516,
+    "95mm²": 5.5532,
+  },
+  // conjunto box / eletrodutos (preço por unidade)
+  box: {
+    "1.1/2\"": 12.00,
+    "2\"":     8.50,
+    "2.1/2\"": 11.00,
+    "3\"":     13.50,
+  },
+  outros: {
+    plaqueta:         { nome: "Plaqueta",                preco: 2.89    },
+    abrac:            { nome: "Abraçadeira 3,5×200",     preco: 0.07112 },
+    porca:            { nome: "Porca sext. inox 1/4",    preco: 0.234   },
+    arruela:          { nome: "Arruela lisa inox 1/4",   preco: 0.32    },
+    parafuso:         { nome: "Parafuso inox 1/4",       preco: 0.525   },
+    rebite:           { nome: "Rebite",                  preco: 0.0423  },
+    conector:         { nome: "Conector Genérico",       preco: 4.28    },
+    barramentoPente:  { nome: "Barramento tipo Pente",   preco: 76.00   },
+  },
+  maoDeObra: {
+    policarb: 75, // por medidor
+    aluminio: 60,
+  },
+  // DPS: 3 módulos + 3 disjuntores monofásicos por quadro (um por fase do disjuntor geral)
+  dps: {
+    classeI:  {
+      cabo: "16mm²", precoCabo: 14.41, metroCabo: 0.3,   // 0.3m por módulo = 0.9m total
+      disjAmp: "63A", precoDisj: 27.97, qtdDisj: 3,       // 3 disj. mono 63A 10kA
+      modulo: "Classe I",  precoModulo: 72.29, qtdModulo: 3,
+    },
+    classeII: {
+      cabo: "6mm²",  precoCabo: 6.00,  metroCabo: 0.3,
+      disjAmp: "25A", precoDisj: 25.76, qtdDisj: 3,       // 3 disj. mono 25A 10kA
+      modulo: "Classe II", precoModulo: 22.71, qtdModulo: 3,
+    },
+  },
+  barramento100: { nome: "Barramento 100A", preco: 182.50, fatorParafuso: 20 },
+  // Barramentos automáticos por corrente (5m total: 3 fases + neutro + terra)
+  // Seleciona o barramento com capacidade >= corrente do disjuntor geral
+  barramentos: [
+    { nome: "Barramento 12,7×3,17mm",  corrente: 100, pesoMetro: 0.358, precoKg: 92 },
+    { nome: "Barramento 15,87×4,76mm", corrente: 150, pesoMetro: 0.672, precoKg: 92 },
+    { nome: "Barramento 19,05×3,17mm", corrente: 150, pesoMetro: 0.537, precoKg: 92 },
+    { nome: "Barramento 19,05×4,76mm", corrente: 200, pesoMetro: 0.807, precoKg: 92 },
+    { nome: "Barramento 25,4×4,76mm",  corrente: 250, pesoMetro: 1.076, precoKg: 92 },
+    { nome: "Barramento 31,75×6,35mm", corrente: 450, pesoMetro: 1.794, precoKg: 92 },
+  ],
+  // Lógica de cabos por tipo de medidor (seção -> cores presentes -> fator)
+  // Baseada nas fórmulas da planilha
+  regrasCabos: {
+    // din = disjuntor geral a montante
+    din: {
+      "50A": { "10mm²": { cores: ["VM","VD","PT"], fator: 1 } },
+      "63A": { "16mm²": { cores: ["VM","VD","PT"], fator: 2 } },
+      "70A": { "16mm²": { cores: ["VM","VD","PT"], fator: 2 } },
+    },
+    cm: {
+      "80A":  { "16mm²": { cores: ["VM","VD","PT"], fator: 1 }, "25mm²": { cores: ["VM","VD","PT","BR"], fator: 1 } },
+      "90A":  { "16mm²": { cores: ["VM","VD","PT"], fator: 1 }, "25mm²": { cores: ["VM","VD","PT","BR"], fator: 1 } },
+      "100A": { "16mm²": { cores: ["VM","VD","PT"], fator: 1 }, "25mm²": { cores: ["VM","VD","PT","BR"], fator: 1 } },
+      "125A": { "35mm²": { cores: ["VM","VD","PT","BR"], fator: 1 } },
+      "150A": { "50mm²": { cores: ["VM","VD","PT","BR"], fator: 1 } },
+      "175A": { "70mm²": { cores: ["VM","VD","PT","BR"], fator: 1 } },
+      "200A": { "70mm²": { cores: ["VM","VD","PT","BR"], fator: 1 } },
+      "225A": { "95mm²": { cores: ["VM","VD","PT","BR"], fator: 1 } },
+      "250A": { "95mm²": { cores: ["VM","VD","PT","BR"], fator: 1 } },
+    },
+    mono: {
+      "40A": { "16mm²": { cores: ["AZ","PT"], fator: 2.1 } },
+      "50A": { "16mm²": { cores: ["AZ","PT"], fator: 2.1 } },
+      "63A": { "16mm²": { cores: ["AZ","PT","VM","VD","BR"], fator: 2.1 } },
+    },
+    bi: {
+      "40A": { "10mm²": { cores: ["AZ","PT","BR"], fator: 2.1 } },
+      "50A": { "10mm²": { cores: ["AZ","PT","BR"], fator: 2.1 } },
+      "63A": { "10mm²": { cores: ["AZ","PT"], fator: 2.1 } },
+    },
+    tri: {
+      "50A": { "10mm²": { cores: ["VM","AZ","PT","BR"], fator: 2.1 } },
+      "63A": { "16mm²": { cores: ["AZ","PT"], fator: 2.1 } },
+      "70A": { "16mm²": { cores: ["AZ","PT","VM"], fator: 2.1 } },
+    },
+  },
+  // olhais por tipo de medidor
+  regrasOlhais: {
+    din:  { "50A": { "10mm²": 4 },  "63A": { "16mm²": 10 }, "70A": { "16mm²": 10 } },
+    cm:   { "80A": { "16mm²": 10 }, "90A": { "16mm²": 10 }, "100A": { "16mm²": 10 },
+            "125A": { "35mm²": 4 }, "150A": { "50mm²": 4 }, "175A": { "70mm²": 4 },
+            "200A": { "70mm²": 4 }, "225A": { "95mm²": 4 }, "250A": { "95mm²": 4 } },
+    mono: { "40A": { "16mm²": 2 }, "50A": { "16mm²": 2 }, "63A": { "16mm²": 2 } },
+    bi:   { "40A": { "10mm²": 2 }, "50A": { "10mm²": 2 }, "63A": { "10mm²": 2 } },
+    tri:  { "50A": { "10mm²": 4 }, "63A": { "16mm²": 2 }, "70A": { "16mm²": 2 } },
+  },
+};
+
+// ============================================================
+// FUNÇÕES DE CÁLCULO
+// ============================================================
+function calcularOrcamento(config) {
+  const {
+    tipoQuadro, // 'aluminio' | 'policarb'
+    qtdMedidores,
+    disjuntorGeral, // { tipo: 'din'|'cm', amperagem: '80A', qty: 1 }
+    medidores,      // [{ tipo: 'mono'|'bi'|'tri', amperagem: '50A', qty: 2 }, ...]
+    dps,            // '' | 'classeI' | 'classeII'
+    incluirBarramento, // true/false - se deve incluir barramento automático
+    incluirMO,
+  } = config;
+
+  let itens = {}; // id -> { nome, categoria, qty, precoUnit, precoTotal }
+  const add = (id, nome, categoria, qty, precoUnit) => {
+    if (!itens[id]) itens[id] = { nome, categoria, qty: 0, precoUnit, precoTotal: 0 };
+    itens[id].qty += qty;
+    itens[id].precoTotal = itens[id].qty * precoUnit;
+  };
+
+  // 1. CAIXA PRINCIPAL
+  if (tipoQuadro === "aluminio") {
+    const cx = DB.caixasAluminio.find(c => c.medidores >= qtdMedidores) || DB.caixasAluminio[DB.caixasAluminio.length - 1];
+    add("cx_alum", `QM Alumínio ${cx.medidores} medidores`, "Caixas", 1, cx.preco * 1.25);
+  } else {
+    // POLICARBONATO
+    add("cx_bep_dps", DB.caixasPolicarb.bepDps.nome, "Caixas", 1, DB.caixasPolicarb.bepDps.preco);
+    add("cx_med",     DB.caixasPolicarb.medidor.nome, "Caixas", qtdMedidores, DB.caixasPolicarb.medidor.preco);
+    
+    // Lógica das caixas especiais conforme disjuntor geral
+    const ampGeral = parseInt(disjuntorGeral.amperagem) || 0;
+    if (ampGeral <= 70) {
+      // Até 70A: Cx Barramento + Cx Disj Geral
+      add("cx_disj", DB.caixasPolicarb.disjGeral.nome, "Caixas", 1, DB.caixasPolicarb.disjGeral.preco);
+      // Cx Barramento será adicionada se usar barramento 100A ou 200A (mais adiante)
+    } else if (ampGeral <= 100) {
+      // >70A até 100A: 2 Caixas Especiais (substituem cx barramento + disj geral)
+      add("cx_especial", DB.caixasPolicarb.especial.nome, "Caixas", 2, DB.caixasPolicarb.especial.preco);
+    } else {
+      // >100A: 3 Caixas Especiais
+      add("cx_especial", DB.caixasPolicarb.especial.nome, "Caixas", 3, DB.caixasPolicarb.especial.preco);
+    }
+  }
+
+  // 2. DISJUNTOR GERAL
+  if (disjuntorGeral.tipo && disjuntorGeral.amperagem) {
+    const precoDisj = DB.disjuntores[disjuntorGeral.tipo]?.[disjuntorGeral.amperagem] || 0;
+    if (precoDisj > 0) {
+      add(`disj_${disjuntorGeral.tipo}_${disjuntorGeral.amperagem}`,
+        `Disj. ${disjuntorGeral.tipo.toUpperCase()} ${disjuntorGeral.amperagem}`,
+        "Disjuntores", disjuntorGeral.qty || 1, precoDisj);
+    }
+    
+    // BARRAMENTO AUTOMÁTICO (5m total: 3 fases + neutro + terra)
+    // Seleciona barramento com capacidade ESTRITAMENTE MAIOR que a corrente do disjuntor
+    const ampGeral = parseInt(disjuntorGeral.amperagem) || 0;
+    const barramentoSelecionado = DB.barramentos.find(b => b.corrente > ampGeral) 
+      || DB.barramentos[DB.barramentos.length - 1]; // fallback: maior barramento
+    
+    if (barramentoSelecionado && incluirBarramento) {
+      const metrosTotal = 5; // 3 fases + neutro + terra
+      const pesoTotal = metrosTotal * barramentoSelecionado.pesoMetro;
+      const precoTotal = pesoTotal * barramentoSelecionado.precoKg;
+      
+      add(`barramento_auto`,
+        `${barramentoSelecionado.nome} (${metrosTotal}m)`,
+        "Barramentos", 1, precoTotal);
+    }
+    
+    // Cabos do disjuntor geral
+    const regrasCG = DB.regrasCabos[disjuntorGeral.tipo]?.[disjuntorGeral.amperagem] || {};
+    const olhaisCG = DB.regrasOlhais[disjuntorGeral.tipo]?.[disjuntorGeral.amperagem] || {};
+    const qtyCG = disjuntorGeral.qty || 1;
+    Object.entries(regrasCG).forEach(([secao, info]) => {
+      const qtyCabo = info.cores.length * info.fator * qtyCG;
+      add(`cabo_${secao}`, `Cabo ${secao}`, "Cabos", qtyCabo, DB.cabos[secao] || 0);
+      add(`termo_${secao}`, `Termocontrátil ${secao}`, "Termocontrátil", qtyCabo * 0.1, DB.termo[secao] || 0);
+    });
+    Object.entries(olhaisCG).forEach(([secao, fator]) => {
+      add(`olhal_${secao}`, `Olhal ${secao}`, "Olhais", fator * qtyCG, DB.olhais[secao] || 0);
+    });
+  }
+
+  // 3. MEDIDORES (unidades consumidoras)
+  medidores.forEach(m => {
+    if (!m.tipo || !m.amperagem || !m.qty) return;
+    const precoDisj = DB.disjuntores[m.tipo]?.[m.amperagem] || 0;
+    if (precoDisj > 0) {
+      add(`disj_${m.tipo}_${m.amperagem}`,
+        `Disj. ${m.tipo.toUpperCase()} ${m.amperagem}`,
+        "Disjuntores", m.qty, precoDisj);
+    }
+    // Cabos
+    const regras = DB.regrasCabos[m.tipo]?.[m.amperagem] || {};
+    const olhais = DB.regrasOlhais[m.tipo]?.[m.amperagem] || {};
+    Object.entries(regras).forEach(([secao, info]) => {
+      const qtyCabo = info.cores.length * info.fator * m.qty;
+      add(`cabo_${secao}`, `Cabo ${secao}`, "Cabos", qtyCabo, DB.cabos[secao] || 0);
+      add(`termo_${secao}`, `Termocontrátil ${secao}`, "Termocontrátil", qtyCabo * 0.1, DB.termo[secao] || 0);
+    });
+    Object.entries(olhais).forEach(([secao, fator]) => {
+      add(`olhal_${secao}`, `Olhal ${secao}`, "Olhais", fator * m.qty, DB.olhais[secao] || 0);
+    });
+    
+    // Plaquetas, abraçadeiras e conectores (em AMBOS os tipos de QM)
+    add("plaqueta", DB.outros.plaqueta.nome, "Outros", m.tipo === "tri" ? 2 * m.qty : 2 * m.qty, DB.outros.plaqueta.preco);
+    add("abrac",    DB.outros.abrac.nome,    "Outros", m.tipo === "tri" ? 20 * m.qty : 20 * m.qty, DB.outros.abrac.preco);
+    add("conector", DB.outros.conector.nome, "Outros", m.qty, DB.outros.conector.preco);
+    
+    // APENAS PARA POLICARBONATO: Box, parafusos, porcas, arruelas, rebites, barramento pente
+    if (tipoQuadro === "policarb") {
+      add("box_1.5", "Conjunto Box 1.1/2\"", "Eletrodutos", m.qty, DB.box["1.1/2\""]);
+      add("porca",    DB.outros.porca.nome,    "Outros", m.tipo === "tri" ? 12 * m.qty : 12 * m.qty, DB.outros.porca.preco);
+      add("arruela",  DB.outros.arruela.nome,  "Outros", m.tipo === "tri" ? 12 * m.qty : 12 * m.qty, DB.outros.arruela.preco);
+      add("parafuso", DB.outros.parafuso.nome, "Outros", m.tipo === "tri" ? 12 * m.qty : 12 * m.qty, DB.outros.parafuso.preco);
+      add("rebite",   DB.outros.rebite.nome,   "Outros", m.tipo === "tri" ? 4 * m.qty  : 4 * m.qty,  DB.outros.rebite.preco);
+      add("barra_pente", DB.outros.barramentoPente.nome, "Outros", m.qty, DB.outros.barramentoPente.preco);
+    }
+  });
+
+  // 4. DPS — 3 módulos + 3 disjuntores mono (um por fase), fixo por quadro
+  if (dps) {
+    const dpsCfg = DB.dps[dps];
+    const metroCaboTotal = dpsCfg.metroCabo * dpsCfg.qtdModulo; // 0.3m × 3 = 0.9m
+    add(`cabo_dps_${dps}`,
+        `Cabo ${dpsCfg.cabo} verde (DPS)`,
+        "DPS", metroCaboTotal, dpsCfg.precoCabo);
+    add(`disj_dps_${dps}`,
+        `Disj. Mono ${dpsCfg.disjAmp} 10kA (DPS) — 3 fases`,
+        "DPS", dpsCfg.qtdDisj, dpsCfg.precoDisj);
+    add(`mod_dps_${dps}`,
+        `Módulo DPS ${dpsCfg.modulo} — 3 fases`,
+        "DPS", dpsCfg.qtdModulo, dpsCfg.precoModulo);
+    if (tipoQuadro === "policarb") {
+      add("cx_bep_dps2", DB.caixasPolicarb.bepDps.nome + " (DPS)", "Caixas", 1, DB.caixasPolicarb.bepDps.preco);
+    }
+  }
+
+  // 5. MÃO DE OBRA
+  if (incluirMO) {
+    const precoMO = tipoQuadro === "aluminio" ? DB.maoDeObra.aluminio : DB.maoDeObra.policarb;
+    add("mao_de_obra", `Mão de Obra (${tipoQuadro === "aluminio" ? "Alumínio" : "Policarb."})`, "Mão de Obra", qtdMedidores, precoMO);
+  }
+
+  const listaItens = Object.values(itens).filter(i => i.qty > 0 && i.precoTotal > 0);
+  const custoTotal = listaItens.reduce((s, i) => s + i.precoTotal, 0);
+  const vendaSemNF  = custoTotal * 1.30;
+  const vendaComNF  = custoTotal * 1.55;
+
+  return { itens: listaItens, custoTotal, vendaSemNF, vendaComNF };
+}
+
+// ============================================================
+// COMPONENTES UI
+// ============================================================
+const CORES = {
+  bg: "#0d1117",
+  surface: "#161b22",
+  surfaceHover: "#1c2228",
+  border: "#30363d",
+  borderFocus: "#f97316",
+  accent: "#f97316",
+  accentSoft: "#f9731620",
+  accentGlow: "#f9731640",
+  text: "#e6edf3",
+  textMuted: "#7d8590",
+  green: "#3fb950",
+  greenSoft: "#3fb95020",
+  red: "#f85149",
+  yellow: "#d29922",
+};
+
+const css = `
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@400;700;800&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: ${CORES.bg};
+    color: ${CORES.text};
+    font-family: 'Syne', sans-serif;
+    min-height: 100vh;
+  }
+
+  .app {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 24px 16px 80px;
+  }
+
+  /* HEADER */
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 40px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid ${CORES.border};
+  }
+  .header-icon {
+    width: 44px; height: 44px;
+    background: ${CORES.accent};
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px;
+    flex-shrink: 0;
+  }
+  .header h1 {
+    font-size: 22px; font-weight: 800; letter-spacing: -0.5px;
+    line-height: 1.1;
+  }
+  .header span {
+    font-size: 13px; color: ${CORES.textMuted}; font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* STEP TABS */
+  .steps {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 28px;
+    background: ${CORES.surface};
+    padding: 4px;
+    border-radius: 12px;
+    border: 1px solid ${CORES.border};
+  }
+  .step-tab {
+    flex: 1;
+    padding: 10px 8px;
+    border-radius: 8px;
+    border: none;
+    background: transparent;
+    color: ${CORES.textMuted};
+    font-family: 'Syne', sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+  }
+  .step-tab.active {
+    background: ${CORES.accent};
+    color: #000;
+  }
+  .step-tab.done { color: ${CORES.green}; }
+  .step-tab:hover:not(.active) { background: ${CORES.surfaceHover}; color: ${CORES.text}; }
+  .step-num {
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.1);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700;
+  }
+  .step-tab.active .step-num { background: rgba(0,0,0,0.2); }
+  .step-tab.done .step-num { background: ${CORES.greenSoft}; color: ${CORES.green}; }
+
+  /* CARD */
+  .card {
+    background: ${CORES.surface};
+    border: 1px solid ${CORES.border};
+    border-radius: 14px;
+    padding: 24px;
+    margin-bottom: 16px;
+  }
+  .card-title {
+    font-size: 13px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1px; color: ${CORES.accent};
+    margin-bottom: 20px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .card-title::before {
+    content: '';
+    display: block; width: 3px; height: 16px;
+    background: ${CORES.accent}; border-radius: 2px;
+  }
+
+  /* FORM */
+  .form-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .form-group { display: flex; flex-direction: column; gap: 6px; }
+  .form-group label {
+    font-size: 12px; color: ${CORES.textMuted}; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .form-group input,
+  .form-group select {
+    background: ${CORES.bg};
+    border: 1px solid ${CORES.border};
+    border-radius: 8px;
+    color: ${CORES.text};
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    padding: 10px 12px;
+    outline: none;
+    transition: border-color 0.2s;
+    width: 100%;
+    appearance: none;
+    -webkit-appearance: none;
+  }
+  .form-group input:focus,
+  .form-group select:focus { border-color: ${CORES.accent}; box-shadow: 0 0 0 3px ${CORES.accentGlow}; }
+  .form-group input::placeholder { color: ${CORES.textMuted}; }
+
+  /* TOGGLE TYPE */
+  .toggle-group {
+    display: flex; gap: 8px; flex-wrap: wrap;
+  }
+  .toggle-btn {
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: 1px solid ${CORES.border};
+    background: transparent;
+    color: ${CORES.textMuted};
+    font-family: 'Syne', sans-serif;
+    font-size: 13px; font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .toggle-btn.active {
+    border-color: ${CORES.accent};
+    background: ${CORES.accentSoft};
+    color: ${CORES.accent};
+  }
+  .toggle-btn:hover:not(.active) { border-color: ${CORES.textMuted}; color: ${CORES.text}; }
+
+  /* MEDIDOR LIST */
+  .med-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+  .med-item {
+    display: flex; align-items: center; justify-content: space-between;
+    background: ${CORES.bg};
+    border: 1px solid ${CORES.border};
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+  }
+  .med-item-info { display: flex; align-items: center; gap: 10px; }
+  .med-badge {
+    padding: 2px 8px; border-radius: 4px;
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+  }
+  .badge-mono { background: #1a3a5c; color: #58a6ff; }
+  .badge-bi   { background: #2d2a1a; color: #e3b341; }
+  .badge-tri  { background: #1a2d1a; color: ${CORES.green}; }
+  .badge-din  { background: #2d1a2d; color: #bc8cff; }
+  .badge-cm   { background: #2d1a1a; color: ${CORES.red}; }
+  .med-remove {
+    background: none; border: none; color: ${CORES.textMuted};
+    cursor: pointer; font-size: 16px; padding: 0 4px;
+    transition: color 0.2s;
+  }
+  .med-remove:hover { color: ${CORES.red}; }
+
+  /* ADD BUTTON */
+  .btn-add {
+    display: flex; align-items: center; gap: 8px;
+    background: ${CORES.accentSoft};
+    border: 1px dashed ${CORES.accent};
+    border-radius: 8px;
+    color: ${CORES.accent};
+    font-family: 'Syne', sans-serif;
+    font-size: 13px; font-weight: 700;
+    padding: 10px 16px;
+    cursor: pointer;
+    width: 100%;
+    justify-content: center;
+    margin-top: 8px;
+    transition: all 0.2s;
+  }
+  .btn-add:hover { background: ${CORES.accent}; color: #000; }
+
+  /* CHECKBOX */
+  .check-row {
+    display: flex; align-items: center; gap: 10px;
+    cursor: pointer; padding: 10px 0;
+  }
+  .check-row input[type=checkbox] {
+    width: 18px; height: 18px; accent-color: ${CORES.accent};
+    cursor: pointer;
+  }
+  .check-row span { font-size: 14px; }
+
+  /* NAVIGATION */
+  .nav-buttons {
+    display: flex; gap: 10px; margin-top: 20px;
+  }
+  .btn-back {
+    padding: 12px 24px;
+    border-radius: 8px;
+    border: 1px solid ${CORES.border};
+    background: transparent;
+    color: ${CORES.textMuted};
+    font-family: 'Syne', sans-serif;
+    font-size: 14px; font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn-back:hover { border-color: ${CORES.text}; color: ${CORES.text}; }
+  .btn-next {
+    flex: 1;
+    padding: 12px 24px;
+    border-radius: 8px;
+    border: none;
+    background: ${CORES.accent};
+    color: #000;
+    font-family: 'Syne', sans-serif;
+    font-size: 14px; font-weight: 800;
+    cursor: pointer;
+    transition: all 0.2s;
+    letter-spacing: 0.5px;
+  }
+  .btn-next:hover { filter: brightness(1.1); transform: translateY(-1px); }
+
+  /* RESULTADO */
+  .result-header {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    margin-bottom: 24px; flex-wrap: wrap; gap: 12px;
+  }
+  .result-title { font-size: 20px; font-weight: 800; }
+  .result-subtitle { font-size: 13px; color: ${CORES.textMuted}; margin-top: 2px; }
+
+  .price-cards {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px; margin-bottom: 24px;
+  }
+  .price-card {
+    background: ${CORES.bg};
+    border: 1px solid ${CORES.border};
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .price-card.highlight { border-color: ${CORES.accent}; background: ${CORES.accentSoft}; }
+  .price-card label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+    color: ${CORES.textMuted}; font-weight: 700; display: block; margin-bottom: 6px;
+  }
+  .price-card.highlight label { color: ${CORES.accent}; }
+  .price-card .value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 22px; font-weight: 700;
+  }
+  .price-card.highlight .value { color: ${CORES.accent}; }
+
+  /* TABELA */
+  .itens-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .itens-table th {
+    text-align: left; padding: 8px 12px;
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px;
+    color: ${CORES.textMuted}; font-weight: 700;
+    border-bottom: 1px solid ${CORES.border};
+  }
+  .itens-table td {
+    padding: 9px 12px;
+    border-bottom: 1px solid ${CORES.border}40;
+    vertical-align: middle;
+  }
+  .itens-table tr:last-child td { border-bottom: none; }
+  .itens-table tr:hover td { background: ${CORES.surfaceHover}; }
+  .cat-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    background: ${CORES.accentSoft}; color: ${CORES.accent};
+  }
+  .qty-mono { font-family: 'JetBrains Mono', monospace; color: ${CORES.textMuted}; }
+  .preco-total { font-family: 'JetBrains Mono', monospace; font-weight: 700; text-align: right; }
+
+  /* PRINT */
+  .btn-print {
+    display: flex; align-items: center; gap: 8px;
+    padding: 11px 20px; border-radius: 8px;
+    border: 1px solid ${CORES.border};
+    background: transparent; color: ${CORES.text};
+    font-family: 'Syne', sans-serif;
+    font-size: 13px; font-weight: 700;
+    cursor: pointer; transition: all 0.2s;
+  }
+  .btn-print:hover { border-color: ${CORES.accent}; color: ${CORES.accent}; }
+
+  /* EMPTY */
+  .empty-state {
+    text-align: center; padding: 40px;
+    color: ${CORES.textMuted}; font-size: 14px;
+  }
+  .empty-state div { font-size: 32px; margin-bottom: 12px; }
+
+  /* SEPARATOR */
+  .sep { height: 1px; background: ${CORES.border}; margin: 16px 0; }
+
+  /* CAT SECTION */
+  .cat-section { margin-bottom: 4px; }
+  .cat-header {
+    padding: 6px 12px;
+    font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+    color: ${CORES.textMuted}; font-weight: 700;
+    background: ${CORES.bg};
+  }
+
+  @media print {
+    body { background: white; color: black; }
+    .steps, .nav-buttons, .btn-print, .btn-next, .btn-back { display: none !important; }
+    .card { border: 1px solid #ccc; }
+    .price-card { border: 1px solid #ccc; }
+  }
+
+  @media (max-width: 600px) {
+    .steps { flex-direction: column; }
+    .step-tab { justify-content: flex-start; }
+    .form-row { grid-template-columns: 1fr; }
+  }
+`;
+
+// ============================================================
+// OPÇÕES DINÂMICAS
+// ============================================================
+const OPCOES_TIPO_GERAL = ["din", "cm"];
+const OPCOES_AMP_GERAL = {
+  din: ["50A", "63A", "70A"],
+  cm:  ["80A", "90A", "100A", "125A", "150A", "175A", "200A", "225A", "250A"],
+};
+const OPCOES_TIPO_MED = ["mono", "bi", "tri"];
+const OPCOES_AMP_MED = {
+  mono: ["40A", "50A", "63A"],
+  bi:   ["40A", "50A", "63A"],
+  tri:  ["50A", "63A", "70A"],
+};
+
+function fmt(v) {
+  return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+// ============================================================
+// APP PRINCIPAL
+// ============================================================
+export default function App() {
+  const [etapa, setEtapa] = useState(1);
+
+  // Config
+  const [cliente, setCliente] = useState({ nome: "", cpfCnpj: "", endereco: "" });
+  const [tipoQuadro, setTipoQuadro] = useState("policarb");
+  const [qtdMedidores, setQtdMedidores] = useState(6);
+  const [disjuntorGeral, setDisjuntorGeral] = useState({ tipo: "din", amperagem: "70A", qty: 1 });
+  const [medidores, setMedidores] = useState([]);
+  const [novoMed, setNovoMed] = useState({ tipo: "mono", amperagem: "40A", qty: 1 });
+  const [dps, setDps] = useState("");
+  const [incluirBarramento, setIncluirBarramento] = useState(true);
+  const [incluirMO, setIncluirMO] = useState(true);
+
+  // Resultado
+  const [resultado, setResultado] = useState(null);
+
+  const addMedidor = () => {
+    if (!novoMed.tipo || !novoMed.amperagem) return;
+    setMedidores(p => [...p, { ...novoMed }]);
+  };
+
+  const removeMedidor = (idx) => {
+    setMedidores(p => p.filter((_, i) => i !== idx));
+  };
+
+  const calcular = useCallback(() => {
+    const res = calcularOrcamento({
+      tipoQuadro, qtdMedidores, disjuntorGeral, medidores,
+      dps, incluirBarramento, incluirMO,
+    });
+    setResultado(res);
+    setEtapa(4);
+  }, [tipoQuadro, qtdMedidores, disjuntorGeral, medidores, dps, incluirBarramento, incluirMO]);
+
+  // Agrupamento por categoria
+  const categorias = resultado
+    ? [...new Set(resultado.itens.map(i => i.categoria))]
+    : [];
+
+  const LABEL_TIPO = { mono: "Mono", bi: "Bi", tri: "Tri", din: "Din", cm: "CM" };
+
+  return (
+    <>
+      <style>{css}</style>
+      <div className="app">
+        {/* HEADER */}
+        <div className="header">
+          <div className="header-icon">⚡</div>
+          <div>
+            <h1>QM Elétrico — Orçamento</h1>
+            <span>Quadro de Medição Coletiva · Policarbonato & Alumínio</span>
+          </div>
+        </div>
+
+        {/* TABS */}
+        <div className="steps">
+          {[
+            { n: 1, label: "Projeto" },
+            { n: 2, label: "Medidores" },
+            { n: 3, label: "Extras" },
+            { n: 4, label: "Orçamento" },
+          ].map(s => (
+            <button
+              key={s.n}
+              className={`step-tab ${etapa === s.n ? "active" : ""} ${etapa > s.n ? "done" : ""}`}
+              onClick={() => s.n < etapa || etapa === 4 ? setEtapa(s.n) : null}
+            >
+              <span className="step-num">{etapa > s.n ? "✓" : s.n}</span>
+              {s.label}
+            </button>
+          ))}
+        </div>
+
+        {/* ======================== ETAPA 1 ======================== */}
+        {etapa === 1 && (
+          <>
+            <div className="card">
+              <div className="card-title">Dados do Cliente</div>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Nome do Cliente</label>
+                  <input value={cliente.nome} onChange={e => setCliente(p => ({ ...p, nome: e.target.value }))} placeholder="Ex: João Silva" />
+                </div>
+                <div className="form-group">
+                  <label>CPF / CNPJ</label>
+                  <input value={cliente.cpfCnpj} onChange={e => setCliente(p => ({ ...p, cpfCnpj: e.target.value }))} placeholder="000.000.000-00" />
+                </div>
+              </div>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Endereço da Obra</label>
+                  <input value={cliente.endereco} onChange={e => setCliente(p => ({ ...p, endereco: e.target.value }))} placeholder="Rua, número, cidade" />
+                </div>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-title">Tipo de Quadro</div>
+              <div className="toggle-group" style={{ marginBottom: 20 }}>
+                <button className={`toggle-btn ${tipoQuadro === "policarb" ? "active" : ""}`} onClick={() => setTipoQuadro("policarb")}>🔲 Policarbonato</button>
+                <button className={`toggle-btn ${tipoQuadro === "aluminio" ? "active" : ""}`} onClick={() => setTipoQuadro("aluminio")}>🔩 Alumínio</button>
+              </div>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Qtd. Medidores</label>
+                  <select value={qtdMedidores} onChange={e => setQtdMedidores(Number(e.target.value))}>
+                    {[2,3,4,6,9,12,15,18,21,24,27,30,33,36].map(n => (
+                      <option key={n} value={n}>{n} medidores</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-title">Disjuntor Geral (a montante)</div>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Tipo</label>
+                  <div className="toggle-group">
+                    <button className={`toggle-btn ${disjuntorGeral.tipo === "din" ? "active" : ""}`}
+                      onClick={() => setDisjuntorGeral(p => ({ ...p, tipo: "din", amperagem: "70A" }))}>Din</button>
+                    <button className={`toggle-btn ${disjuntorGeral.tipo === "cm" ? "active" : ""}`}
+                      onClick={() => setDisjuntorGeral(p => ({ ...p, tipo: "cm", amperagem: "100A" }))}>CM (medidor)</button>
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label>Amperagem</label>
+                  <select value={disjuntorGeral.amperagem}
+                    onChange={e => setDisjuntorGeral(p => ({ ...p, amperagem: e.target.value }))}>
+                    {(OPCOES_AMP_GERAL[disjuntorGeral.tipo] || []).map(a => (
+                      <option key={a} value={a}>{a}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="nav-buttons">
+              <button className="btn-next" onClick={() => setEtapa(2)}>Próximo →</button>
+            </div>
+          </>
+        )}
+
+        {/* ======================== ETAPA 2 ======================== */}
+        {etapa === 2 && (
+          <>
+            <div className="card">
+              <div className="card-title">Adicionar Medidor</div>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Tipo</label>
+                  <div className="toggle-group">
+                    {OPCOES_TIPO_MED.map(t => (
+                      <button key={t} className={`toggle-btn ${novoMed.tipo === t ? "active" : ""}`}
+                        onClick={() => setNovoMed(p => ({ ...p, tipo: t, amperagem: OPCOES_AMP_MED[t][0] }))}>
+                        {t === "mono" ? "Mono" : t === "bi" ? "Bi" : "Tri"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label>Amperagem</label>
+                  <select value={novoMed.amperagem} onChange={e => setNovoMed(p => ({ ...p, amperagem: e.target.value }))}>
+                    {(OPCOES_AMP_MED[novoMed.tipo] || []).map(a => (
+                      <option key={a} value={a}>{a}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group" style={{ maxWidth: 120 }}>
+                  <label>Qtd.</label>
+                  <select value={novoMed.qty} onChange={e => setNovoMed(p => ({ ...p, qty: Number(e.target.value) }))}>
+                    {Array.from({ length: 36 }, (_, i) => i + 1).map(n => (
+                      <option key={n} value={n}>{n}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <button className="btn-add" onClick={addMedidor}>＋ Adicionar</button>
+            </div>
+
+            {medidores.length > 0 ? (
+              <div className="card">
+                <div className="card-title">Medidores Adicionados</div>
+                <div className="med-list">
+                  {medidores.map((m, i) => (
+                    <div className="med-item" key={i}>
+                      <div className="med-item-info">
+                        <span className={`med-badge badge-${m.tipo}`}>{LABEL_TIPO[m.tipo]}</span>
+                        <span style={{ fontWeight: 700 }}>{m.amperagem}</span>
+                        <span style={{ color: CORES.textMuted }}>×{m.qty}</span>
+                      </div>
+                      <button className="med-remove" onClick={() => removeMedidor(i)}>×</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="card">
+                <div className="empty-state">
+                  <div>📋</div>
+                  Nenhum medidor adicionado ainda
+                </div>
+              </div>
+            )}
+
+            <div className="nav-buttons">
+              <button className="btn-back" onClick={() => setEtapa(1)}>← Voltar</button>
+              <button className="btn-next" onClick={() => setEtapa(3)}>Próximo →</button>
+            </div>
+          </>
+        )}
+
+        {/* ======================== ETAPA 3 ======================== */}
+        {etapa === 3 && (
+          <>
+            <div className="card">
+              <div className="card-title">DPS — Dispositivo de Proteção</div>
+              <div className="toggle-group">
+                <button className={`toggle-btn ${dps === "" ? "active" : ""}`} onClick={() => setDps("")}>Sem DPS</button>
+                <button className={`toggle-btn ${dps === "classeI" ? "active" : ""}`} onClick={() => setDps("classeI")}>Classe I</button>
+                <button className={`toggle-btn ${dps === "classeII" ? "active" : ""}`} onClick={() => setDps("classeII")}>Classe II</button>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-title">Opções Finais</div>
+              <label className="check-row">
+                <input type="checkbox" checked={incluirBarramento} onChange={e => setIncluirBarramento(e.target.checked)} />
+                <span>
+                  Incluir Barramento — {(() => {
+                    const ampGeral = parseInt(disjuntorGeral.amperagem) || 0;
+                    const barr = DB.barramentos.find(b => b.corrente > ampGeral) || DB.barramentos[DB.barramentos.length - 1];
+                    const metros = 5;
+                    const preco = metros * barr.pesoMetro * barr.precoKg;
+                    return `${barr.nome} (${metros}m) — ${fmt(preco)}`;
+                  })()}
+                </span>
+              </label>
+              {tipoQuadro === "aluminio" && (
+                <div style={{ marginLeft: 28, marginTop: 4, fontSize: 12, color: CORES.textMuted }}>
+                  💡 Muitos QMs de alumínio já vêm com barramento incluído
+                </div>
+              )}
+              <label className="check-row">
+                <input type="checkbox" checked={incluirMO} onChange={e => setIncluirMO(e.target.checked)} />
+                <span>Incluir Mão de Obra — R$ {tipoQuadro === "aluminio" ? DB.maoDeObra.aluminio : DB.maoDeObra.policarb}/medidor</span>
+              </label>
+            </div>
+
+            <div className="nav-buttons">
+              <button className="btn-back" onClick={() => setEtapa(2)}>← Voltar</button>
+              <button className="btn-next" onClick={calcular}>⚡ Gerar Orçamento</button>
+            </div>
+          </>
+        )}
+
+        {/* ======================== ETAPA 4 — RESULTADO ======================== */}
+        {etapa === 4 && resultado && (
+          <>
+            <div className="card">
+              <div className="result-header">
+                <div>
+                  <div className="result-title">
+                    {cliente.nome || "Orçamento"} — QM {tipoQuadro === "aluminio" ? "Alumínio" : "Policarbonato"}
+                  </div>
+                  <div className="result-subtitle">
+                    {qtdMedidores} medidores · {cliente.endereco || "Sem endereço"}
+                  </div>
+                </div>
+                <button className="btn-print" onClick={() => window.print()}>🖨 Imprimir</button>
+              </div>
+
+              <div className="price-cards">
+                <div className="price-card">
+                  <label>Custo Total</label>
+                  <div className="value">{fmt(resultado.custoTotal)}</div>
+                </div>
+                <div className="price-card">
+                  <label>Venda sem NF (×1.30)</label>
+                  <div className="value">{fmt(resultado.vendaSemNF)}</div>
+                </div>
+                <div className="price-card highlight">
+                  <label>Venda com NF (×1.55)</label>
+                  <div className="value">{fmt(resultado.vendaComNF)}</div>
+                </div>
+              </div>
+
+              <div className="sep" />
+
+              {/* TABELA POR CATEGORIA */}
+              {categorias.map(cat => (
+                <div className="cat-section" key={cat}>
+                  <div className="cat-header">{cat}</div>
+                  <table className="itens-table">
+                    <thead>
+                      <tr>
+                        <th>Item</th>
+                        <th>Qtd.</th>
+                        <th>Unit.</th>
+                        <th style={{ textAlign: "right" }}>Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {resultado.itens
+                        .filter(i => i.categoria === cat)
+                        .map((item, idx) => (
+                          <tr key={idx}>
+                            <td>{item.nome}</td>
+                            <td className="qty-mono">{item.qty % 1 === 0 ? item.qty : item.qty.toFixed(2)}</td>
+                            <td className="qty-mono">{fmt(item.precoUnit)}</td>
+                            <td className="preco-total">{fmt(item.precoTotal)}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
+
+              <div className="sep" />
+
+              {/* TOTAL FINAL */}
+              <table className="itens-table">
+                <tbody>
+                  <tr>
+                    <td colSpan={3} style={{ fontWeight: 700 }}>CUSTO TOTAL</td>
+                    <td className="preco-total" style={{ fontSize: 16 }}>{fmt(resultado.custoTotal)}</td>
+                  </tr>
+                  <tr>
+                    <td colSpan={3} style={{ color: CORES.textMuted }}>Venda sem NF (×1.30)</td>
+                    <td className="preco-total">{fmt(resultado.vendaSemNF)}</td>
+                  </tr>
+                  <tr>
+                    <td colSpan={3} style={{ color: CORES.accent, fontWeight: 700 }}>Venda com NF (×1.55)</td>
+                    <td className="preco-total" style={{ color: CORES.accent }}>{fmt(resultado.vendaComNF)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div className="nav-buttons">
+              <button className="btn-back" onClick={() => setEtapa(3)}>← Editar</button>
+              <button className="btn-next" onClick={() => { setEtapa(1); setResultado(null); setMedidores([]); }}>
+                ＋ Novo Orçamento
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </>
+  );
+}
